@@ -13,7 +13,57 @@ const app = express();
 const PORT = process.env.PORT || 4000;
 const pool = new pg.Pool({ connectionString: process.env.DB_URL });
 
+app.set('view engine', 'ejs');
+app.use(express.static(path.join(__dirname, 'public')));
+app.use(bodyParser.urlencoded({ extended: true }));
+app.use(cookieParser());
+
 const recaptchaVerifyUrl = "https://www.google.com/recaptcha/api/siteverify";
+
+// ✅ Function to check if the users table exists and create it if not
+const initializeDatabase = async () => {
+    try {
+        const result = await pool.query(`
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_name = 'users'
+            );
+        `);
+
+        if (!result.rows[0].exists) {
+            console.log("Creating 'users' table...");
+            const sqlFilePath = path.join(__dirname, 'database.sql');
+
+            if (fs.existsSync(sqlFilePath)) {
+                console.log("Running SQL file: database.sql");
+                const sqlQuery = fs.readFileSync(sqlFilePath, 'utf-8');
+                await pool.query(sqlQuery);
+                console.log("Database initialized successfully.");
+            } else {
+                console.log("No database.sql file found. Creating table manually...");
+                await pool.query(`
+                    CREATE TABLE users (
+                        id SERIAL PRIMARY KEY,
+                        username VARCHAR(50) UNIQUE NOT NULL,
+                        email VARCHAR(100) UNIQUE NOT NULL,
+                        password VARCHAR(255) NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                `);
+                console.log("'users' table created successfully.");
+            }
+        } else {
+            console.log("'users' table already exists.");
+        }
+    } catch (error) {
+        console.error("Error initializing database:", error);
+    }
+};
+
+// ✅ Run the function when the server starts
+initializeDatabase();
+
+
 
 app.post('/verify-recaptcha', async (req, res) => {
     try {

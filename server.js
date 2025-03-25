@@ -136,40 +136,59 @@ app.post('/register', async (req, res) => {
 
 // After successful login, redirect with a success message
 app.post('/login', async (req, res) => {
-    const { username, password, 'g-recaptcha-response': recaptcha } = req.body;
+    const { username, password } = req.body;
+    const recaptcha = req.body['g-recaptcha-response'];  // Correct field name
 
     if (!recaptcha) {
         return res.render('login', { error: 'reCAPTCHA verification failed' });
     }
 
-    const recaptchaVerifyUrl = `https://www.google.com/recaptcha/api/siteverify?secret=${process.env.RECAPTCHA_SECRET_KEY}&response=${recaptcha}`;
-    const recaptchaResponse = await globalThis.fetch(recaptchaVerifyUrl, { method: 'POST' });
-    const recaptchaData = await recaptchaResponse.json();
-
-    if (!recaptchaData.success) {
-        return res.render('login', { error: 'Invalid reCAPTCHA' });
-    }
-
     try {
-        const user = await pool.query('SELECT * FROM users WHERE username=$1 OR email=$1', [username]);
+        // Validate reCAPTCHA
+        const recaptchaVerifyUrl = "https://www.google.com/recaptcha/api/siteverify";
+        const recaptchaSecret = process.env.RECAPTCHA_SECRET_KEY;
+        const recaptchaResponse = await fetch(recaptchaVerifyUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({ secret: recaptchaSecret, response: recaptcha })
+        });
 
-        if (user.rows.length === 0) {
+        const recaptchaData = await recaptchaResponse.json();
+
+        if (!recaptchaData.success) {
+            console.log("reCAPTCHA failed:", recaptchaData);
+            return res.render('login', { error: 'Invalid reCAPTCHA. Please try again.' });
+        }
+
+        // Check user credentials
+        const userResult = await pool.query('SELECT * FROM users WHERE username=$1 OR email=$1', [username]);
+
+        if (userResult.rows.length === 0) {
             return res.render('login', { error: 'User not found' });
         }
 
-        const match = await bcrypt.compare(password, user.rows[0].password);
+        const user = userResult.rows[0];
+        const match = await bcrypt.compare(password, user.password);
+        
         if (!match) {
             return res.render('login', { error: 'Incorrect password' });
         }
 
-        const token = jwt.sign({ id: user.rows[0].id, username: user.rows[0].username, email: user.rows[0].email }, process.env.JWT_SECRET, { expiresIn: '15m' });
+        // Generate JWT token
+        const token = jwt.sign(
+            { id: user.id, username: user.username, email: user.email },
+            process.env.JWT_SECRET,
+            { expiresIn: '15m' }
+        );
 
         res.cookie('token', token, { httpOnly: true });
         res.redirect('/profile?message=Login successful!');
     } catch (err) {
-        res.render('login', { error: 'Login error' });
+        console.error("Login error:", err);
+        res.render('login', { error: 'Login error. Please try again later.' });
     }
 });
+
 
 app.get('/profile', authenticateToken, async (req, res) => {
     if (!req.user) {

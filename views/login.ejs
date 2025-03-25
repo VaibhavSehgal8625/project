@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Login</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="flex items-center justify-center min-h-screen bg-blue-400">
+    <form action="/login" method="POST" class="p-6 bg-white rounded-lg shadow-md w-96">
+        <h2 class="text-2xl font-bold mb-4">Login</h2>
+        <% if (error) { %><p class="text-red-500"><%= error %></p><% } %>
+        <input type="text" name="username" placeholder="Username or Email" class="w-full p-2 border mb-2">
+        <input type="password" name="password" placeholder="Password" class="w-full p-2 border mb-2">
+        <div class="g-recaptcha mb-2" data-sitekey="6LfPffoqAAAAAECkGQy-PIL3VsBTleWh_LYyLAVi"></div>
+        <button type="submit" class="w-full bg-blue-500 text-white p-2">Login</button>
+        <p class="text-sm mt-2">Don't have an account? <a href="/register" class="text-blue-500">Sign Up</a></p>
+    </form>
+    <script src="https://www.google.com/recaptcha/api.js" async defer></script>
+</body>
+</html>

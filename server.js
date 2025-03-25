@@ -7,65 +7,13 @@ const bodyParser = require('body-parser');
 const cookieParser = require('cookie-parser');
 const fetch = require('node-fetch');
 const path = require('path');
-const fs = require('fs');
-
 
 dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 4000;
 const pool = new pg.Pool({ connectionString: process.env.DB_URL });
 
-app.set('view engine', 'ejs');
-app.use(express.static(path.join(__dirname, 'public')));
-app.use(bodyParser.urlencoded({ extended: true }));
-app.use(cookieParser());
-
 const recaptchaVerifyUrl = "https://www.google.com/recaptcha/api/siteverify";
-
-// ✅ Function to check if the users table exists and create it if not
-const initializeDatabase = async () => {
-    try {
-        const result = await pool.query(`
-            SELECT EXISTS (
-                SELECT FROM information_schema.tables 
-                WHERE table_name = 'users'
-            );
-        `);
-
-        if (!result.rows[0].exists) {
-            console.log("Creating 'users' table...");
-            const sqlFilePath = path.join(__dirname, 'database.sql');
-
-            if (fs.existsSync(sqlFilePath)) {
-                console.log("Running SQL file: database.sql");
-                const sqlQuery = fs.readFileSync(sqlFilePath, 'utf-8');
-                await pool.query(sqlQuery);
-                console.log("Database initialized successfully.");
-            } else {
-                console.log("No database.sql file found. Creating table manually...");
-                await pool.query(`
-                    CREATE TABLE users (
-                        id SERIAL PRIMARY KEY,
-                        username VARCHAR(50) UNIQUE NOT NULL,
-                        email VARCHAR(100) UNIQUE NOT NULL,
-                        password VARCHAR(255) NOT NULL,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    );
-                `);
-                console.log("'users' table created successfully.");
-            }
-        } else {
-            console.log("'users' table already exists.");
-        }
-    } catch (error) {
-        console.error("Error initializing database:", error);
-    }
-};
-
-// ✅ Run the function when the server starts
-initializeDatabase();
-
-
 
 app.post('/verify-recaptcha', async (req, res) => {
     try {
@@ -136,59 +84,40 @@ app.post('/register', async (req, res) => {
 
 // After successful login, redirect with a success message
 app.post('/login', async (req, res) => {
-    const { username, password } = req.body;
-    const recaptcha = req.body['g-recaptcha-response'];  // Correct field name
+    const { username, password, 'g-recaptcha-response': recaptcha } = req.body;
 
     if (!recaptcha) {
         return res.render('login', { error: 'reCAPTCHA verification failed' });
     }
 
+    const recaptchaVerifyUrl = `https://www.google.com/recaptcha/api/siteverify?secret=${process.env.RECAPTCHA_SECRET_KEY}&response=${recaptcha}`;
+    const recaptchaResponse = await globalThis.fetch(recaptchaVerifyUrl, { method: 'POST' });
+    const recaptchaData = await recaptchaResponse.json();
+
+    if (!recaptchaData.success) {
+        return res.render('login', { error: 'Invalid reCAPTCHA' });
+    }
+
     try {
-        // Validate reCAPTCHA
-        const recaptchaVerifyUrl = "https://www.google.com/recaptcha/api/siteverify";
-        const recaptchaSecret = process.env.RECAPTCHA_SECRET_KEY;
-        const recaptchaResponse = await fetch(recaptchaVerifyUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: new URLSearchParams({ secret: recaptchaSecret, response: recaptcha })
-        });
+        const user = await pool.query('SELECT * FROM users WHERE username=$1 OR email=$1', [username]);
 
-        const recaptchaData = await recaptchaResponse.json();
-
-        if (!recaptchaData.success) {
-            console.log("reCAPTCHA failed:", recaptchaData);
-            return res.render('login', { error: 'Invalid reCAPTCHA. Please try again.' });
-        }
-
-        // Check user credentials
-        const userResult = await pool.query('SELECT * FROM users WHERE username=$1 OR email=$1', [username]);
-
-        if (userResult.rows.length === 0) {
+        if (user.rows.length === 0) {
             return res.render('login', { error: 'User not found' });
         }
 
-        const user = userResult.rows[0];
-        const match = await bcrypt.compare(password, user.password);
-        
+        const match = await bcrypt.compare(password, user.rows[0].password);
         if (!match) {
             return res.render('login', { error: 'Incorrect password' });
         }
 
-        // Generate JWT token
-        const token = jwt.sign(
-            { id: user.id, username: user.username, email: user.email },
-            process.env.JWT_SECRET,
-            { expiresIn: '15m' }
-        );
+        const token = jwt.sign({ id: user.rows[0].id, username: user.rows[0].username, email: user.rows[0].email }, process.env.JWT_SECRET, { expiresIn: '15m' });
 
         res.cookie('token', token, { httpOnly: true });
         res.redirect('/profile?message=Login successful!');
     } catch (err) {
-        console.error("Login error:", err);
-        res.render('login', { error: 'Login error. Please try again later.' });
+        res.render('login', { error: 'Login error' });
     }
 });
-
 
 app.get('/profile', authenticateToken, async (req, res) => {
     if (!req.user) {
